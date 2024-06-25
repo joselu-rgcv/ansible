@@ -1,4 +1,0 @@
-- name: restart resolvconf
-  service:
-    name: resolvconf
-    state: restarted
