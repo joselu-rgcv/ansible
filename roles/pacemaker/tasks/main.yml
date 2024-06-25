@@ -1,0 +1,202 @@
+- name: Ensure needed packages are installed
+  apt:
+    name:
+    - apache2
+    - libapache2-mod-php
+    - mariadb-client
+    - mariadb-server
+    - pacemaker
+    - pcs
+    - php
+    - php-curl
+    - php-gd
+    - php-intl
+    - php-mysql
+    - php-xml
+    - php-zip
+    - python3-pymysql
+    - python-mysqldb
+    - unzip
+  notify:
+  - disable apache2
+  - disable mariadb
+
+- name: Run all pending handlers
+  meta: flush_handlers
+
+- name: Obtain secret key and save as a variable
+  shell: egrep -o '.{38}==$' /etc/ceph/ceph.client.admin.keyring
+  register: secretkey
+  run_once: true
+
+- name: Store the secret key in admin.secret file
+  lineinfile:
+    path: /home/cephuser/admin.secret
+    create: yes
+    owner: cephuser
+    group: cephuser
+    mode: 0400
+    line: "{{ secretkey.stdout }}"
+
+- name: Mount CephFS on /ceph and add to fstab
+  ansible.posix.mount:
+    path: /ceph
+    src: ceph-mon1:6789,ceph-mon2:6789,ceph-mon3:6789:/
+    fstype: ceph
+    opts: name=admin,secretfile=/home/cephuser/admin.secret,noatime,_netdev
+    state: mounted
+
+- name: Create the necessary structure on /ceph
+  file:
+    path: "/ceph/{{ item }}"
+    state: directory
+  loop:
+    - sql
+    - prestashop
+  run_once: true
+
+- name: Check if /ceph/prestashop folder is empty before proceeding
+  find:
+    paths: '/ceph/prestashop/'
+  register: prestashopFound
+  run_once: true
+
+- name: Download and unzip prestashop_1.7.7.0.zip package
+  unarchive:
+    src: https://download.prestashop.com/download/releases/prestashop_1.7.7.0.zip
+    dest: /ceph/prestashop
+    remote_src: yes
+  run_once: true
+  when: prestashopFound.matched == 0
+
+- name: Unzip prestashop.zip package
+  unarchive:
+    src: /ceph/prestashop/prestashop.zip
+    dest: /ceph/prestashop
+    owner: www-data
+    group: www-data
+    remote_src: yes
+  run_once: true
+  when: prestashopFound.matched == 0
+
+- name: Delete unnecessary PrestaShop files
+  file:
+    path: "/ceph/prestashop/{{ item }}"
+    state: absent
+  loop:
+    - Install_PrestaShop.html
+    - prestashop.zip
+  run_once: true
+  when: prestashopFound.matched == 0
+
+- name: Copy prestashop.conf VirtualHost file
+  copy:
+    src: files/prestashop.conf
+    dest: /etc/apache2/sites-available/
+
+- name: Create prestashop.conf VirtualHost symlink
+  file:
+    src: /etc/apache2/sites-available/prestashop.conf
+    dest: /etc/apache2/sites-enabled/prestashop.conf
+    state: link
+
+- name: Delete 000-default.conf VirtualHost symlink
+  file:
+    path: /etc/apache2/sites-enabled/000-default.conf
+    state: absent
+
+- name: Create rewrite module symlink
+  file:
+    src: /etc/apache2/mods-available/rewrite.load
+    dest: /etc/apache2/mods-enabled/rewrite.load
+    state: link
+
+- name: Change MariaDB datadir to /ceph/sql
+  replace:
+    path: /etc/mysql/mariadb.conf.d/50-server.cnf
+    regexp: 'datadir                 = /var/lib/mysql'
+    replace: 'datadir                 = /ceph/sql'
+
+- name: Change MariaDB bind-address to 0.0.0.0
+  replace:
+    path: /etc/mysql/mariadb.conf.d/50-server.cnf
+    regexp: 'bind-address            = 127.0.0.1'
+    replace: 'bind-address            = 0.0.0.0'
+
+- name: Check if /ceph/sql folder is empty before proceeding
+  find:
+    paths: '/ceph/sql/'
+  register: sqlFound
+  run_once: true
+
+- name: Install DB prerequisites
+  shell: "mysql_install_db --datadir=/ceph/sql --user=mysql"
+  run_once: true
+  when: sqlFound.matched == 0
+
+- name: Set hacluster user password
+  user:
+    name: hacluster
+    password: "{{ hacluster_crypt_pass }}"
+
+- name: Destroy default cluster
+  shell: "pcs cluster destroy"
+  run_once: true
+
+- name: Add hosts to the new cluster
+  shell: "pcs host auth ceph-client1 ceph-client2 -u hacluster -p {{ hacluster_plain_pass }}"
+  run_once: true
+
+- name: Create, start and enable the new cluster
+  shell: "pcs cluster setup mycluster ceph-client1 ceph-client2 --start --enable --force"
+  run_once: true
+
+- name: Disable STONITH property
+  shell: "pcs property set stonith-enabled=false"
+  run_once: true
+
+- name: Create VirtualIP resource for Apache2
+  shell: "pcs resource create WebVirtualIP ocf:heartbeat:IPaddr2 ip={{ apache_virt_ip }} cidr_netmask=32 nic=eth0 op monitor interval=30s"
+  run_once: true
+
+- name: Create Apache2 resource
+  shell: 'pcs resource create WebSite ocf:heartbeat:apache configfile=/etc/apache2/apache2.conf statusurl="http://localhost/server-status" op monitor interval=1min'
+  run_once: true
+
+- name: Create Apache2 and VirtualIP colocation
+  shell: "pcs constraint colocation add WebSite with WebVirtualIP INFINITY"
+  run_once: true
+
+- name: Create VirtualIP resource for MariaDB
+  shell: "pcs resource create DBVirtualIP ocf:heartbeat:IPaddr2 ip={{ mariadb_virt_ip }} cidr_netmask=32 nic=eth0 op monitor interval=30s"
+  run_once: true
+
+- name: Create MariaDB resource
+  shell: 'pcs resource create Database ocf:heartbeat:mysql binary="/usr/bin/mysqld_safe" config="/etc/mysql/my.cnf" datadir="/ceph/sql" pid="/run/mysqld/mysqld.pid" socket="/run/mysqld/mysqld.sock" op start timeout=60s op stop timeout=60s op monitor interval=20s timeout=30s'
+  run_once: true
+
+- name: Create MariaDB and VirtualIP colocation
+  shell: "pcs constraint colocation add Database with DBVirtualIP INFINITY"
+  run_once: true
+
+- name: Create constraint to preferably run all resources on the first node
+  shell: "pcs constraint location {{ item }} prefers ceph-client1=INFINITY"
+  loop:
+    - WebVirtualIP
+    - WebSite
+    - DBVirtualIP
+    - Database
+  run_once: true
+
+- name: Create a new MariaDB database
+  community.mysql.mysql_db:
+    name: prestashop
+  when: ansible_hostname == 'ceph-client1'
+
+- name: Create a new user with privileges in the previous database
+  community.mysql.mysql_user:
+    name: usuario
+    password: usuario
+    priv: 'prestashop.*:ALL'
+    host: '%'
+  when: ansible_hostname == 'ceph-client1'

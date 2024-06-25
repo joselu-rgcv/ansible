@@ -1,0 +1,19 @@
+[admin]
+admin1 ansible_host=172.24.4.27
+
+[osd]
+osd1 ansible_host=172.24.4.138
+osd2 ansible_host=172.24.4.173
+osd3 ansible_host=172.24.4.164
+
+[mon]
+mon1 ansible_host=172.24.4.95
+mon2 ansible_host=172.24.4.76
+mon3 ansible_host=172.24.4.79
+
+[client]
+client1 ansible_host=172.24.4.223
+client2 ansible_host=172.24.4.162
+
+[dns]
+dns1 ansible_host=172.24.4.93

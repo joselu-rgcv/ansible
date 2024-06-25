@@ -1,0 +1,16 @@
+admin_ip: 10.0.0.21
+osd1_ip: 10.0.0.143
+osd2_ip: 10.0.0.238
+osd3_ip: 10.0.0.125
+mon1_ip: 10.0.0.64
+mon2_ip: 10.0.0.209
+mon3_ip: 10.0.0.189
+client1_ip: 10.0.0.9
+client2_ip: 10.0.0.19
+dns_ip: 10.0.0.220
+
+apache_virt_ip: 10.0.0.200
+mariadb_virt_ip: 10.0.0.201
+
+hacluster_crypt_pass: $6$vs272OD3toORiva2$SNDSrdhEDPfWo28ZoTmrC21NWVxoueRfuYbatNGprsv.PY6KpOQEV/zYYsfiwGTWkCCVogEp3WSgFnA0I3b5J/
+hacluster_plain_pass: hacluster
