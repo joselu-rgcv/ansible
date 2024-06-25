@@ -1,0 +1,47 @@
+- name: Ensure apt does not use debian replica
+  lineinfile:
+    path: /etc/apt/sources.list
+    regexp: ".*debian.org.*"
+    state: absent
+
+- name: Ensure apt uses cica replica
+  lineinfile:
+    path: /etc/apt/sources.list
+    line: 'deb {{ item }} main'
+  loop:
+    - https://ftp.cica.es/debian/ buster
+    - https://ftp.cica.es/debian/ buster-updates
+    - https://ftp.cica.es/debian-security/ buster/updates
+
+- name: Ensure system is updated
+  apt:
+    update_cache: yes
+    upgrade: yes
+
+- name: Set timezone to Europe/Madrid
+  timezone:
+    name: Europe/Madrid
+
+- name: Ensure hosts file is not managed by cloud_init
+  replace:
+    path: /etc/cloud/cloud.cfg
+    regexp: 'manage_etc_hosts: true'
+    replace: 'manage_etc_hosts: false'
+
+- name: Ensure hosts file does not resolve hostname
+  lineinfile:
+    path: /etc/hosts
+    regexp: "127.0.1.1 .*.novalocal"
+    state: absent
+
+- name: Add DNS server to resolvconf configuration
+  lineinfile:
+    path: /etc/resolvconf/resolv.conf.d/head
+    line: 'nameserver {{ dns_ip }}'
+  notify: restart resolvconf
+
+- name: Add search pattern to resolvconf configuration
+  lineinfile:
+    path: /etc/resolvconf/resolv.conf.d/base
+    line: 'search example.com'
+  notify: restart resolvconf
